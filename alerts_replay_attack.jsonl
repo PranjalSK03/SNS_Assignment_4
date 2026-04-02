@@ -1,0 +1,1 @@
+{"attack_id": "replay_attack-1775155655", "details": {"payload_sig": "abc123", "repeats": 3}, "entity": {"dst_port": "8080", "src_ip": "10.0.0.7"}, "multi_step": false, "rule_id": "replay_attack", "severity": "Medium", "sources": ["network"], "title": "Replay-like repeated payloads", "ts": 1775155655.67108, "type": "alert"}

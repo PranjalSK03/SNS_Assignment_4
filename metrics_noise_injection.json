@@ -1,0 +1,13 @@
+{
+  "alert_latency_avg_seconds": 4.457,
+  "alerts": 7,
+  "attacks": 1,
+  "cpu_system_seconds": 0.032,
+  "cpu_user_seconds": 0.223,
+  "f1": 1.0,
+  "false_negative_rate": 0.0,
+  "false_positive_rate": 0.0,
+  "memory_max_rss_kb": 15464,
+  "precision": 1.0,
+  "recall": 1.0
+}

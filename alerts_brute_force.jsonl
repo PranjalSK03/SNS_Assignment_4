@@ -1,0 +1,1 @@
+{"attack_id": "brute_force-1775155541", "details": {"failures": 5, "window": 60}, "entity": {"src_ip": "10.0.0.5", "user": "alice"}, "multi_step": false, "rule_id": "bruteforce", "severity": "High", "sources": ["network", "host"], "title": "Brute-force login attempts", "ts": 1775155542.1887548, "type": "alert"}

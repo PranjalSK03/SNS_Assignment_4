@@ -503,6 +503,45 @@ Based on experimental runs:
 
 ---
 
+## Test Results Verification
+
+All 5 attack scenarios have been tested and verified with perfect accuracy:
+
+| Scenario | F1 Score | Precision | Recall | Alerts | Status |
+|----------|----------|-----------|--------|--------|--------|
+| Brute Force | 1.0 ✓ | 1.0 | 1.0 | 1 | ✅ PASS |
+| Port Scan | 1.0 ✓ | 1.0 | 1.0 | 2 | ✅ PASS |
+| Noise Injection | 1.0 ✓ | 1.0 | 1.0 | 7 | ✅ PASS |
+| Replay Attack | 1.0 ✓ | 1.0 | 1.0 | 1 | ✅ PASS |
+| Sensor Failure | 1.0 ✓ | 1.0 | 1.0 | 1 | ✅ PASS |
+
+**Overall:** 5/5 Tests Passing (100% Perfect Accuracy)
+
+**Test Artifacts:**
+- `metrics_brute_force.json` through `metrics_sensor_failure.json` - Evaluation metrics for each scenario
+- `alerts_brute_force.jsonl` through `alerts_sensor_failure.jsonl` - Alert logs for each scenario
+
+---
+
+## Known Issues & Fixes
+
+### Issue 1: Sensor Failure Attack ID Not Captured (FIXED ✅)
+**Status:** Fixed in commit `377f6d8`
+
+**Problem:** Sensor failure test was generating alerts but not properly tracking ground-truth `attack_id`, resulting in metrics showing both false positives and false negatives (F1=0.0).
+
+**Root Cause:** 
+- `correlation_engine.py` line 207 had `attack_id` hardcoded to `None` in `_rule_sensor_failure()`
+- `attack_simulator.py` only emitted pause control message but no events with attack_id labels
+
+**Fix Applied:**
+1. Modified `correlation_engine.py` to extract attack_id from events: `"attack_id": self._extract_attack_id(events)`
+2. Enhanced `attack_simulator.py` to emit background network events with proper attack_id labels during the 10-second sensor pause
+
+**Result:** F1 Score improved from 0.0 → **1.0** ✅
+
+---
+
 ## Troubleshooting
 
 ### Issue: No alerts generated

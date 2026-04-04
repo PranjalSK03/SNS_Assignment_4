@@ -1,1 +1,1 @@
-{"attack_id": null, "details": {"gap_seconds": 10.0}, "entity": {"sensor": "host"}, "multi_step": false, "rule_id": "sensor_failure", "severity": "High", "sources": ["system"], "title": "Host sensor heartbeat missing (>8s gap)", "ts": 1775155691.6079693, "type": "alert"}
+{"attack_id": "sensor_failure-1775321869", "details": {"gap_seconds": 8.7}, "entity": {"sensor": "host"}, "multi_step": false, "rule_id": "sensor_failure", "severity": "High", "sources": ["system"], "title": "Host sensor heartbeat missing (>8s gap)", "ts": 1775321877.0579166, "type": "alert"}

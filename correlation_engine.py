@@ -206,7 +206,7 @@ class CorrelationEngine(threading.Thread):
                         "entity": {"sensor": "host"},
                         "details": {"gap_seconds": round(time_since_hb, 2)},
                         "multi_step": False,
-                        "attack_id": None,
+                        "attack_id": self._extract_attack_id(events),
                     }
                 )
         return detections

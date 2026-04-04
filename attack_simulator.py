@@ -168,8 +168,22 @@ class AttackSimulator(threading.Thread):
             time.sleep(0.15)
 
     def _scenario_sensor_failure(self, attack_id: str) -> None:
+        # Pause the host sensor (stops heartbeats for 10 seconds)
         self._emit_raw_host({"control": "pause", "duration": 10, "label": {"attack": "sensor_failure", "attack_id": attack_id}})
-        time.sleep(10)
+        
+        # Emit background network events with attack_id during the pause
+        # so CorrelationEngine can extract attack_id when detecting heartbeat gap
+        start = time.time()
+        while time.time() - start < 10 and not self.bus.stop_event.is_set():
+            self._emit_raw_network({
+                "type": "flow",
+                "src_ip": "127.0.0.1",
+                "dst_ip": "10.1.1.1",
+                "dst_port": 80,
+                "protocol": "tcp",
+                "label": {"attack": "sensor_failure", "attack_id": attack_id}
+            })
+            time.sleep(1)
 
     def _benign_flow(self) -> Dict:
         return {

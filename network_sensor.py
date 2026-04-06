@@ -23,6 +23,7 @@ class NetworkSensor(threading.Thread):
                     meta={"sensor_id": self.sensor_id},
                 )
                 self.bus.normalized.put(hb)
+                self.bus.normalized_log.put(hb)
                 self._next_heartbeat = now + self.heartbeat_interval
             try:
                 raw = self.bus.raw_network.get(timeout=0.5)
@@ -48,3 +49,4 @@ class NetworkSensor(threading.Thread):
                 label=raw.get("label"),
             )
             self.bus.normalized.put(event)
+            self.bus.normalized_log.put(event)

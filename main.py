@@ -5,6 +5,7 @@ import time
 from alert_manager import AlertManager
 from attack_simulator import AttackSimulator
 from correlation_engine import CorrelationEngine
+from event_logger import EventLogger
 from event_bus import create_bus
 from host_sensor import HostSensor
 from metrics import MetricsCollector
@@ -16,11 +17,12 @@ def run_experiment(scenario: str, baseline_seconds: int, seed: int) -> None:
     network_sensor = NetworkSensor(bus)
     host_sensor = HostSensor(bus)
     correlation = CorrelationEngine(bus)
+    event_logger = EventLogger(bus)
     alerts = AlertManager(bus)
     metrics = MetricsCollector(bus)
     simulator = AttackSimulator(bus, seed=seed)
 
-    threads = [network_sensor, host_sensor, correlation, alerts, metrics, simulator]
+    threads = [network_sensor, host_sensor, correlation, event_logger, alerts, metrics, simulator]
     for t in threads:
         t.start()
 

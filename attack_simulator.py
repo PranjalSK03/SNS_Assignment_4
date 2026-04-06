@@ -100,7 +100,7 @@ class AttackSimulator(threading.Thread):
                     "label": {"attack": "brute_force", "attack_id": attack_id},
                 }
             )
-            time.sleep(0.2)
+            time.sleep(1)
         self._emit_raw_host(
             {
                 "type": "login_success",

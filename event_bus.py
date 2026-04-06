@@ -8,6 +8,7 @@ class EventBus:
     raw_network: Queue
     raw_host: Queue
     normalized: Queue
+    normalized_log: Queue
     detections: Queue
     alerts: Queue
     metrics: Queue
@@ -19,6 +20,7 @@ def create_bus() -> EventBus:
         raw_network=Queue(),
         raw_host=Queue(),
         normalized=Queue(),
+        normalized_log=Queue(),
         detections=Queue(),
         alerts=Queue(),
         metrics=Queue(),

@@ -1,8 +1,9 @@
 # Multi-Source IDS - Complete Code Architecture & Flow
 
-**Date:** April 3, 2026  
+**Date:** April 7, 2026  
 **Language:** Python 3 (stdlib only)  
 **Architecture:** Multi-threaded Event-Driven System  
+**Components:** 7 independent threads  
 
 ---
 
@@ -21,9 +22,9 @@
 ```
 main.py (Orchestrator)
     ↓
-    creates EventBus (6 queues + stop signal)
+    creates EventBus (7 queues + stop signal)
     ↓
-    starts 6 background threads:
+    starts 7 background threads:
     
     AttackSimulator ←── (generates raw events)
          ├→ raw_network queue
@@ -32,10 +33,15 @@ main.py (Orchestrator)
     NetworkSensor ←── reads raw_network → validates → normalized queue
     HostSensor ←── reads raw_host → validates → normalized queue
     
-    CorrelationEngine ←── reads normalized → applies 6+ rules → detections queue
-         └→ uses AnomalyDetector for z-score calculations
-    
-    AlertManager ←── reads detections → applies gating/dedup → alerts queue
+         ├→ normalized queue goes to:
+         │
+         ├→ CorrelationEngine ←── applies 6+ rules → detections queue
+         │      └→ uses AnomalyDetector for z-score calculations
+         │
+         ├→ EventLogger ←── logs all events → events.jsonl
+         │
+         └→ AlertManager ←── reads detections → applies gating/dedup → alerts.jsonl
+                    └→ metrics queue
     
     MetricsCollector ←── reads alerts + metrics queue → calculates precision/recall/F1
          └→ outputs metrics.json
@@ -65,7 +71,7 @@ SEVERITY_LEVELS = ["Info", "Low", "Medium", "High", "Critical"]  # Alert severit
 
 **Dependencies:** None (only stdlib: json, time, typing)
 
-**Used By:** NetworkSensor, HostSensor, CorrelationEngine, AlertManager
+**Used By:** NetworkSensor, HostSensor, CorrelationEngine, AlertManager, EventLogger
 
 **Critical Requirement:** Every event created by sensors MUST pass `validate_event()` or system rejects it.
 
@@ -80,12 +86,13 @@ SEVERITY_LEVELS = ["Info", "Low", "Medium", "High", "Critical"]  # Alert severit
 ```python
 @dataclass
 class EventBus:
-    raw_network: Queue      # AttackSimulator → NetworkSensor
-    raw_host: Queue         # AttackSimulator → HostSensor
-    normalized: Queue       # Sensors → CorrelationEngine
-    detections: Queue       # CorrelationEngine → AlertManager
-    alerts: Queue          # AlertManager → MetricsCollector
-    metrics: Queue         # All → MetricsCollector
+    raw_network: Queue         # AttackSimulator → NetworkSensor
+    raw_host: Queue            # AttackSimulator → HostSensor
+    normalized: Queue          # Sensors → CorrelationEngine
+    normalized_log: Queue      # Sensors → EventLogger (NEW)
+    detections: Queue          # CorrelationEngine → AlertManager
+    alerts: Queue              # AlertManager → MetricsCollector
+    metrics: Queue             # All → MetricsCollector
     stop_event: threading.Event  # Signal for graceful shutdown
 ```
 
@@ -93,11 +100,11 @@ class EventBus:
 
 | Function | Parameters | Returns | Role |
 |----------|-----------|---------|------|
-| `create_bus()` | None | `EventBus` | Factory function; initializes all 7 queues and stop_event; called once per experiment |
+| `create_bus()` | None | `EventBus` | Factory function; initializes all 8 queues and stop_event; called once per experiment |
 
 **Dependencies:** dataclasses, queue.Queue, threading.Event (all stdlib)
 
-**Used By:** All 6 components
+**Used By:** All 7 components
 
 **Critical Requirement:** All threads share the SAME EventBus instance; queues are thread-safe.
 
@@ -120,16 +127,17 @@ AttackSimulator (injects raw_network queue)
     ↓ tuple: (src_ip, dst_ip, src_port, dst_port, protocol)
 NetworkSensor.run()
     ↓ make_event() + validate_event()
-EventBus.normalized queue
+    ├→ EventBus.normalized queue (to CorrelationEngine)
+    └→ EventBus.normalized_log queue (to EventLogger)
 ```
 
 **Event Types Generated:**
 - `"flow"` - Network flow event (from raw data)
-- `"heartbeat"` - Periodic health signal
+- `"sensor_heartbeat"` - Periodic health signal
 
 **Dependencies:** event_schema.make_event(), threading, time, typing
 
-**Used By:** CorrelationEngine reads from normalized queue
+**Used By:** CorrelationEngine reads from normalized queue; EventLogger reads from normalized_log queue
 
 **Critical Requirement:** Heartbeat every 5 seconds enables detection of sensor failures (>8s gap triggers alert).
 
@@ -144,16 +152,17 @@ EventBus.normalized queue
 | Method | Parameters | Returns | Role |
 |--------|-----------|---------|------|
 | `__init__()` | `bus, sensor_id="host-1", heartbeat_interval=5` | `None` | Initialize daemon thread with EventBus reference and heartbeat timing |
-| `run()` | None | `None` | Main loop: identical to NetworkSensor but reads from raw_host queue; generates "login" and "process" event types; monitors raw_host queue for (user, host, process, outcome) tuples |
+| `run()` | None | `None` | Main loop: identical to NetworkSensor but reads from raw_host queue; generates "login_fail", "login_success" and "process_exec" event types; monitors raw_host queue for (user, host, process, outcome) tuples; emits to both normalized and normalized_log queues |
 
 **Event Types Generated:**
-- `"login"` - Authentication attempt event
-- `"process"` - Process execution event
-- `"heartbeat"` - Health signal
+- `"login_fail"` - Failed authentication event
+- `"login_success"` - Successful authentication event
+- `"process_exec"` - Process execution event
+- `"sensor_heartbeat"` - Health signal
 
 **Dependencies:** event_schema.make_event(), threading, time, typing
 
-**Used By:** CorrelationEngine reads from normalized queue
+**Used By:** CorrelationEngine reads from normalized queue; EventLogger reads from normalized_log queue
 
 **Critical Requirement:** Heartbeat timing synchronized with NetworkSensor (both 5s) for coordinated failure detection.
 
@@ -305,14 +314,17 @@ else:
 | Method | Parameters | Returns | Role |
 |--------|-----------|---------|------|
 | `__init__()` | `bus, seed=7` | `None` | Initialize with EventBus and random seed for reproducibility |
-| `run()` | None | `None` | **Main loop:** monitors command_queue for {"action": ...} messages; handles "baseline", "scenario", "stop" actions |
+| `run()` | None | `None` | **Main loop:** monitors command_queue for {"action": ...} messages; handles "baseline", "scenario", "scenarios", "stop" actions |
 | `start_baseline(duration)` | `duration: int` | `None` | Queue baseline phase (benign traffic for duration seconds) |
-| `start_scenario(name)` | `name: str` | `None` | Queue attack scenario (runs one specific attack) |
+| `start_scenario(name)` | `name: str` | `None` | Queue single attack scenario (runs one specific attack) |
+| `start_scenarios(names)` | `names: list` | `None` | **(NEW)** Queue multiple attack scenarios to run sequentially with 2s delays |
 | `stop()` | None | `None` | Queue stop signal |
 | `_emit_raw_network(data)` | `data: tuple` | `None` | Push to raw_network queue: (src_ip, dst_ip, src_port, dst_port, protocol) |
 | `_emit_raw_host(data)` | `data: tuple` | `None` | Push to raw_host queue: (user, host, process, outcome) |
 | `_emit_truth(attack, attack_id, phase)` | `attack: str, attack_id: str, phase: str` | `None` | Publish ground-truth labels to metrics queue for evaluation |
 | `_baseline(duration)` | `duration: int` | `None` | Generate 60% random network flows + 60% successful logins for duration seconds |
+| `_run_scenario(name)` | `name: str` | `None` | Run a single scenario (brute_force, port_scan, noise_injection, replay_attack, sensor_failure) |
+| `_run_scenarios(names)` | `names: list` | `None` | **(NEW)** Run multiple scenarios sequentially with 2-second delays between them |
 | `_scenario_bruteforce(attack_id)` | `attack_id: str` | `None` | **Attack 1:** 8 failed SSH logins + 1 success from 10.0.0.5 |
 | `_scenario_port_scan(attack_id)` | `attack_id: str` | `None` | **Attack 2:** 15 TCP connection attempts to ports 20-35 from 10.0.0.6 |
 | `_scenario_noise_injection(attack_id)` | `attack_id: str` | `None` | **Attack 3:** 6 seconds random IPs/ports/processes with payload signatures |
@@ -323,7 +335,7 @@ else:
 
 **Attack Scenario Details:**
 
-| Scenario | Duration | Expected Alert | Severity |
+| Scenario | Duration | Expected Alerts | Severity |
 |----------|----------|-----------------|----------|
 | brute_force | ~2s | 1 Alert | High |
 | port_scan | ~2s | 2 Alerts (Medium + High) | High |
@@ -331,15 +343,67 @@ else:
 | replay_attack | ~1s | 1 Alert | Medium |
 | sensor_failure | ~10s | 1 Alert | High |
 
+**Multi-Scenario Support:**
+- New `start_scenarios(list)` method accepts comma-separated scenario names
+- Scenarios run sequentially with 2-second separations
+- Each scenario generates its own unique attack_id
+- Metrics aggregate all attacks and alerts
+- Useful for testing detection under complex/concurrent threat scenarios
+
 **Dependencies:** queue, random, threading, time, typing
 
-**Used By:** main.run_experiment() controls via start_baseline/start_scenario
+**Used By:** main.run_experiment() controls via start_baseline/start_scenario/start_scenarios
 
 **Critical Requirement:** Seed=7 ensures reproducible attacks across test runs.
 
 ---
 
-### File 9: metrics.py - Evaluation Metrics Aggregator
+### File 9: event_logger.py - Event Persistence (NEW)
+
+**Purpose:** Log all normalized events (benign + malicious) to a persistent JSONL file for analysis and reproducibility verification.
+
+**Key Class: `EventLogger(threading.Thread)`**
+
+| Method | Parameters | Returns | Role |
+|--------|-----------|---------|------|
+| `__init__()` | `bus, log_path="events.jsonl"` | `None` | Initialize with EventBus reference and output file path |
+| `run()` | None | `None` | **Main loop:** reads events from normalized_log queue; writes each to events.jsonl in JSON Lines format; runs until `bus.stop_event.is_set()` |
+
+**Data Flow:**
+```
+NetworkSensor.run() + HostSensor.run()
+    ├→ make_event() + validate_event()
+    ├→ push to normalized queue (to CorrelationEngine)
+    └→ push to normalized_log queue (to EventLogger)
+         ↓
+    EventLogger.run()
+         ├→ read event from normalized_log
+         ├→ json.dumps(event)
+         └→ append line to events.jsonl
+```
+
+**Event Logging:**
+- Logs all normalized events: network flows, host events, heartbeats
+- Includes both benign traffic (baseline phase) and attack events
+- Enables reproducibility verification: event count should match across runs with same seed
+- Timestamps are runtime-dependent but event sequence is deterministic
+
+**Output Format (events.jsonl):**
+```jsonl
+{"event_type": "sensor_heartbeat", "source": "network", "ts": 1234567890.5, "schema_version": 1, ...}
+{"event_type": "flow", "source": "network", "dst_port": 22, "src_ip": "10.0.0.5", "ts": 1234567890.6, ...}
+{"event_type": "login_fail", "source": "host", "user": "alice", "ts": 1234567890.7, ...}
+```
+
+**Dependencies:** json, threading, typing (all stdlib)
+
+**Used By:** Provides detailed event audit trail for analysis and reproducibility verification
+
+**Critical Requirement:** Must not block normalized queue; uses independent normalized_log queue for logging to avoid backpressure on detection pipeline.
+
+---
+
+### File 10: metrics.py - Evaluation Metrics Aggregator
 
 **Purpose:** Collect ground-truth labels and alerts; calculate precision/recall/F1; track latency and resource usage.
 
@@ -383,7 +447,7 @@ else:
 
 ---
 
-### File 10: main.py - Orchestrator
+### File 11: main.py - Orchestrator
 
 **Purpose:** Parse CLI arguments; orchestrate entire experiment workflow (baseline → attack → shutdown); output metrics.
 
@@ -391,18 +455,24 @@ else:
 
 | Function | Parameters | Returns | Role |
 |----------|-----------|---------|------|
-| `run_experiment(scenario, baseline_seconds, seed)` | `scenario: str, baseline_seconds: int, seed: int` | `None` | **Master Orchestrator:** creates EventBus; instantiates all 6 components; starts threads; runs baseline phase; runs attack scenario; triggers shutdown; calls metrics.summarize(); outputs metrics.json |
-| `main()` | None | `None` | **CLI Entry Point:** argument parser for --scenario (required), --baseline-seconds (default 5), --seed (default 7); calls run_experiment() |
+| `run_experiment(scenario=None, scenarios=None, baseline_seconds=5, seed=7)` | `scenario: str (optional), scenarios: str (optional), baseline_seconds: int, seed: int` | `None` | **Master Orchestrator:** creates EventBus; instantiates all 7 components; starts threads; runs baseline phase; runs attack scenario(s); triggers shutdown; calls metrics.summarize(); outputs metrics.json |
+| `main()` | None | `None` | **CLI Entry Point:** argument parser for --scenario (mutually exclusive with --scenarios), --scenarios (NEW), --baseline-seconds (default 5), --seed (default 7); validates arguments; calls run_experiment() |
 
 **Execution Flow in `run_experiment()`:**
 ```python
-1. bus = create_bus()  # Create 7 queues + stop_event
-2. Instantiate 6 components (don't start yet)
+1. bus = create_bus()  # Create 8 queues + stop_event
+2. Instantiate 7 components (don't start yet)
 3. for t in threads: t.start()  # Start all threads simultaneously
 4. simulator.start_baseline(baseline_seconds)  # Queue baseline command
 5. sleep(baseline_seconds + 1)  # Wait for baseline completion
-6. simulator.start_scenario(scenario)  # Queue attack command
-7. sleep(10)  # Let attack play out + detection latency
+6. if scenarios:  # NEW: Multi-scenario support
+     scenario_list = scenarios.split(",")
+     simulator.start_scenarios(scenario_list)
+     wait_time = 10 + (2 * len(scenario_list))
+   else:
+     simulator.start_scenario(scenario)
+     wait_time = 10
+7. sleep(wait_time)  # Let attacks play out + detection latency
 8. bus.stop_event.set()  # Signal all threads to stop
 9. simulator.stop()  # Clean shutdown
 10. sleep(1)  # Wait for graceful exit
@@ -412,12 +482,27 @@ else:
 
 **CLI Usage:**
 ```bash
+# Single scenario
 python3 main.py --scenario brute_force --baseline-seconds 5 --seed 7
 python3 main.py --scenario port_scan
 python3 main.py --scenario replay_attack --seed 42
+
+# Multiple scenarios (NEW)
+python3 main.py --scenarios "brute_force,port_scan,replay_attack" --seed 7
+python3 main.py --scenarios "brute_force,port_scan,noise_injection,replay_attack,sensor_failure"
+
+# Multi-scenario with custom baseline
+python3 main.py --scenarios "brute_force,port_scan" --baseline-seconds 15 --seed 42
 ```
 
-**Dependencies:** argparse, json, time + all 6 components
+**Argument Validation:**
+- Ensures exactly one of `--scenario` or `--scenarios` is provided
+- Prevents ambiguous execution (can't use both at once)
+- Automatically adjusts wait time for multi-scenario based on count
+
+**Dependencies:** argparse, json, time + all 7 components
+
+**Critical Requirement:** Must coordinate all 7 threads through shared EventBus; clean shutdown via stop_event ensures all threads exit gracefully before metrics summarization.
 
 ---
 
@@ -428,9 +513,9 @@ python3 main.py --scenario replay_attack --seed 42
 ```
 main.py (start experiment)
     ↓
-    create_bus() [6 queues + stop_event]
+    create_bus() [8 queues + stop_event]
     ↓
-    [Start 6 background threads]
+    [Start 7 background threads]
     ↓
     ┌─────────────────────────────────────────────────┐
     │ BASELINE PHASE (5 seconds benign traffic)       │
@@ -443,13 +528,20 @@ main.py (start experiment)
     │   → parse raw_network                            │
     │   → make_event(source="network")                │
     │   → validate_event()                            │
-    │   → normalized queue                            │
+    │   ├→ normalized queue (to CorrelationEngine)    │
+    │   └→ normalized_log queue (to EventLogger)      │
     │                                                  │
     │ HostSensor.run()                                │
     │   → parse raw_host                              │
     │   → make_event(source="host")                   │
     │   → validate_event()                            │
-    │   → normalized queue                            │
+    │   ├→ normalized queue (to CorrelationEngine)    │
+    │   └→ normalized_log queue (to EventLogger)      │
+    │                                                  │
+    │ EventLogger.run()                               │
+    │   → read normalized_log events                  │
+    │   → json.dumps() + write to events.jsonl        │
+    │   (logs benign activity for analysis)           │
     │                                                  │
     │ CorrelationEngine.run()                         │
     │   → read normalized events                       │
@@ -467,10 +559,13 @@ main.py (start experiment)
     └─────────────────────────────────────────────────┘
     ↓
     ┌─────────────────────────────────────────────────┐
-    │ ATTACK PHASE (specific scenario, ~10 seconds)   │
+    │ ATTACK PHASE (single or multiple scenarios)     │
+    │ (single: ~10s, multi: ~10s + 2s per scenario)   │
     │                                                  │
-    │ AttackSimulator._scenario_*()                    │
+    │ AttackSimulator._scenario_*() or                │
+    │ AttackSimulator._run_scenarios()                │
     │   → injects attack events into raw_* queues     │
+    │   → (multi-scenario: sequential with 2s delay)  │
     │   → emits ground-truth labels:                  │
     │     metrics.put({                               │
     │       type: "attack_start",                     │
@@ -480,6 +575,10 @@ main.py (start experiment)
     │     })                                          │
     │                                                  │
     │ [Sensors process attack events]                 │
+    │                                                  │
+    │ EventLogger.run()                               │
+    │   → logs all attack events to events.jsonl      │
+    │   → interspersed with benign baseline events    │
     │                                                  │
     │ CorrelationEngine._evaluate_rules()             │
     │   → _rule_* methods detect attack pattern       │

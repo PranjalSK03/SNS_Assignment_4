@@ -80,14 +80,36 @@ python3 main.py --scenario replay_attack
 python3 main.py --scenario sensor_failure
 ```
 
+### Running Multiple Attack Scenarios
+
+Test the system under concurrent/sequential attack combinations:
+
+```bash
+# Run 3 attacks in sequence (each with 2s separation)
+python3 main.py --scenarios "brute_force,port_scan,replay_attack" --seed 7
+
+# Run all 5 scenarios in one test
+python3 main.py --scenarios "brute_force,port_scan,noise_injection,replay_attack,sensor_failure"
+
+# Multi-scenario with custom baseline
+python3 main.py --scenarios "brute_force,port_scan" --baseline-seconds 15 --seed 42
+```
+
+**Multi-scenario behavior:**
+- Scenarios run sequentially with 2-second delays between them
+- All attacks recorded with distinct attack_ids
+- Metrics show cumulative accuracy (TP/FP/FN across all attacks)
+- Useful for testing detection under complex/concurrent threat scenarios
+
 ### Output Artifacts
 
 After each run, observe:
 1. **Console output** - Real-time alerts printed immediately
-2. **alerts.jsonl** - All alerts in JSON Lines format (one JSON object per line)
-3. **metrics.json** - Evaluation metrics (precision, recall, F1, latency, CPU, memory)
+2. **events.jsonl** - All normalized network + host events (including benign traffic)
+3. **alerts.jsonl** - All alerts in JSON Lines format (one JSON object per line)
+4. **metrics.json** - Evaluation metrics (precision, recall, F1, latency, CPU, memory)
 
-Example:
+Example single-scenario output:
 ```bash
 $ python3 main.py --scenario brute_force
 ALERT High: Brute-force login attempts
@@ -107,6 +129,24 @@ Metrics:
 }
 ```
 
+Example multi-scenario output:
+```bash
+$ python3 main.py --scenarios "brute_force,port_scan,replay_attack" --seed 7
+ALERT High: Brute-force login attempts
+ALERT Medium: Slow scan pattern
+ALERT High: Port scan detected
+ALERT Medium: Replay-like repeated payloads
+Metrics:
+{
+  "alerts": 4,
+  "attacks": 3,
+  "f1": 1.0,
+  "precision": 1.0,
+  "recall": 1.0,
+  ...
+}
+```
+
 ### Customizing Experiment Parameters
 
 ```bash
@@ -115,6 +155,49 @@ python3 main.py --scenario port_scan --baseline-seconds 10 --seed 42
 
 # View all options
 python3 main.py --help
+```
+
+### Reproducibility Verification
+
+Each scenario is **fully reproducible** when using the same seed. To verify:
+
+```bash
+# Run 1: Generate baseline
+python3 main.py --scenario brute_force --seed 7
+
+# Run 2: Identical execution with same seed
+python3 main.py --scenario brute_force --seed 7
+```
+
+**What is identical (reproducible):**
+- Alert count and detection rule triggered
+- Alert severity and sources (host/network)
+- Entity details (IP, user, port)
+- Metrics (precision, recall, F1, alert count, attack count)
+- Event sequence and pattern (number of login failures, ports scanned, etc.)
+
+**What varies (runtime-dependent):**
+- Timestamps (based on current Unix time when the experiment runs)
+- Attack_id values (includes current timestamp)
+- CPU/memory measurements (system load varies)
+
+The seed controls the *attack traffic pattern*, ensuring the same events are generated in the same order. This allows reproducible evaluation across different runs, machines, and times.
+
+**Example: Verify detection pattern is reproducible**
+```bash
+rm -f events.jsonl alerts.jsonl metrics.json
+python3 main.py --scenario brute_force --seed 7
+# Count events and alerts
+wc -l events.jsonl alerts.jsonl
+# Save metrics
+cp metrics.json metrics_run1.json
+
+# Run again with same seed
+rm -f events.jsonl alerts.jsonl metrics.json
+python3 main.py --scenario brute_force --seed 7
+# Compare: event counts, alert counts, and metrics should match
+wc -l events.jsonl alerts.jsonl
+diff metrics_run1.json metrics.json | grep f1  # F1 score should be identical
 ```
 
 ---

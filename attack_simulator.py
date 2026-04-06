@@ -26,6 +26,9 @@ class AttackSimulator(threading.Thread):
             elif action == "scenario":
                 name = cmd.get("name")
                 self._run_scenario(name)
+            elif action == "scenarios":
+                names = cmd.get("names", [])
+                self._run_scenarios(names)
             elif action == "stop":
                 return
 
@@ -34,6 +37,10 @@ class AttackSimulator(threading.Thread):
 
     def start_scenario(self, name: str) -> None:
         self.command_queue.put({"action": "scenario", "name": name})
+
+    def start_scenarios(self, names: list) -> None:
+        """Run multiple scenarios sequentially with delays between them"""
+        self.command_queue.put({"action": "scenarios", "names": names})
 
     def stop(self) -> None:
         self.command_queue.put({"action": "stop"})
@@ -77,6 +84,16 @@ class AttackSimulator(threading.Thread):
         elif name == "sensor_failure":
             self._scenario_sensor_failure(attack_id)
         self._emit_truth(name, attack_id, "attack_end")
+
+    def _run_scenarios(self, names: list) -> None:
+        """Run multiple scenarios sequentially with 2-second delays between them"""
+        for i, name in enumerate(names):
+            if self.bus.stop_event.is_set():
+                break
+            self._run_scenario(name)
+            # Add delay between scenarios to separate detections (except after last one)
+            if i < len(names) - 1:
+                time.sleep(2)
 
     def _scenario_bruteforce(self, attack_id: str) -> None:
         src_ip = "10.0.0.5"
